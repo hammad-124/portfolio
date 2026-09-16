@@ -9,7 +9,7 @@ const ITEMS = [
   { n: '01', label: 'Home', target: 0 },
   // About lives under the water: its fully-revealed position is the end of the hero's pin.
   { n: '02', label: 'About', target: () => (document.getElementById('home').offsetHeight - window.innerHeight) * 0.82 },
-  { n: '03', label: 'Journey', target: '#journey' },
+  { n: '03', label: 'Journey', target: () => { const j = document.getElementById('journey'); return j.offsetTop + (j.offsetHeight - window.innerHeight) * 0.08 } },
   { n: '04', label: 'Work', target: '#work' },
   { n: '05', label: 'Contact', target: '#contact' },
 ]

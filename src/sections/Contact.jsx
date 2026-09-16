@@ -15,10 +15,10 @@ export default function Contact() {
         </p>
         <a
           href={`mailto:${site.email}`}
-          className="block break-all font-black uppercase leading-[0.9] tracking-[-0.03em] text-[clamp(28px,6.2vw,96px)] transition-colors duration-300 hover:text-accent"
+          className="block break-words font-black uppercase leading-[0.9] tracking-[-0.03em] text-[clamp(26px,6.2vw,96px)] transition-colors duration-300 hover:text-accent"
           style={{ fontFamily: DISPLAY_FONT, fontStretch: '125%' }}
         >
-          {site.email}
+          {site.email.split('@')[0]}@<wbr />{site.email.split('@')[1]}
         </a>
       </div>
       <div className={`flex flex-wrap items-center justify-between gap-4 ${label}`}>

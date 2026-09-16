@@ -18,6 +18,8 @@ import * as THREE from 'three'
  */
 
 export const DEFAULT_SETTINGS = {
+  // Texels along the LONGER visible side; the other side follows the screen's aspect so
+  // a dye texel is the same size in both directions (square textures smear on tall phones).
   simResolution: 256,
   dyeResolution: 512,
   velocityDissipation: 0.962,
@@ -218,7 +220,8 @@ const MASK = /* glsl */ `
       float y = 1.0 - vUv.y;                       // 0 at the top edge, 1 at the bottom
       vec2 q = vec2(vUv.x * uAspect * 2.2, vUv.y * 2.2);
       float n = noise(q + uTime * 0.06) * 0.7 + noise(q * 2.7 - uTime * 0.04) * 0.3;
-      float front = uWash * 1.35 - y - (n - 0.5) * 0.4;
+      float amp = 0.4 * min(1.0, uAspect * 0.9); // tall screens: gentler waterline
+      float front = uWash * 1.35 - y - (n - 0.5) * amp;
       float wash = smoothstep(0.0, 0.08, front);
       mask = max(mask, wash);
     }
@@ -254,6 +257,7 @@ export class FluidReveal {
     this.time = 0
 
     this._buildRenderer()
+    this._measure()
     this._buildSim()
     this._buildComposite()
     this._bindEvents()
@@ -346,19 +350,32 @@ export class FluidReveal {
     })
   }
 
+  // Texture sizes for the current domain (visible w x h, virtual height = h * overscan).
+  _simSizes() {
+    const s = this.settings
+    const { width: w, height: h } = this.size
+    const clamp = (v) => Math.max(32, Math.min(2048, Math.round(v)))
+    const pxDye = Math.max(w, h) / s.dyeResolution // px per dye texel, same both ways
+    const pxSim = Math.max(w, h) / s.simResolution
+    return {
+      dye: [clamp(w / pxDye), clamp((h * s.overscan) / pxDye)],
+      sim: [clamp(w / pxSim), clamp((h * s.overscan) / pxSim)],
+    }
+  }
+
   _buildSim() {
     const s = this.settings
-    const sim = s.simResolution
-    const dye = s.dyeResolution
+    const { dye: [dw, dh], sim: [sw, sh] } = this._simSizes()
+    this._simAspect = this.size.width / this.size.height
 
-    this.velocity = this._createDoubleFBO(sim, sim, THREE.LinearFilter)
-    this.pressure = this._createDoubleFBO(sim, sim, THREE.NearestFilter)
-    this.dye = this._createDoubleFBO(dye, dye, THREE.LinearFilter)
-    this.curlRT = this._createRT(sim, sim, THREE.NearestFilter)
-    this.divergenceRT = this._createRT(sim, sim, THREE.NearestFilter)
+    this.velocity = this._createDoubleFBO(sw, sh, THREE.LinearFilter)
+    this.pressure = this._createDoubleFBO(sw, sh, THREE.NearestFilter)
+    this.dye = this._createDoubleFBO(dw, dh, THREE.LinearFilter)
+    this.curlRT = this._createRT(sw, sh, THREE.NearestFilter)
+    this.divergenceRT = this._createRT(sw, sh, THREE.NearestFilter)
 
-    this.simTexel = new THREE.Vector2(1 / sim, 1 / sim)
-    this.dyeTexel = new THREE.Vector2(1 / dye, 1 / dye)
+    this.simTexel = new THREE.Vector2(1 / sw, 1 / sh)
+    this.dyeTexel = new THREE.Vector2(1 / dw, 1 / dh)
 
     this.curlMat = this._pass(CURL, {
       uVelocity: { value: null },
@@ -468,12 +485,33 @@ export class FluidReveal {
 
   /* ---------- sizing / baking ---------- */
 
+  _measure() {
+    const r = this.container.getBoundingClientRect()
+    this.size = { width: Math.max(1, Math.round(r.width)), height: Math.max(1, Math.round(r.height)) }
+  }
+
+  _disposeSim() {
+    this.velocity.dispose()
+    this.pressure.dispose()
+    this.dye.dispose()
+    this.curlRT.dispose()
+    this.divergenceRT.dispose()
+    ;[this.curlMat, this.vorticityMat, this.advectionMat, this.splatMat, this.divergenceMat, this.pressureMat, this.gradientMat]
+      .forEach((m) => m.dispose())
+  }
+
   _resize() {
     const r = this.container.getBoundingClientRect()
     const w = Math.max(1, Math.round(r.width))
     const h = Math.max(1, Math.round(r.height))
     if (w === this.size.width && h === this.size.height && this._baked) return
     this.size = { width: w, height: h }
+    // Orientation / big aspect change: rebuild the sim textures for the new shape.
+    const aspect = w / h
+    if (this._simAspect && Math.abs(aspect / this._simAspect - 1) > 0.15) {
+      this._disposeSim()
+      this._buildSim()
+    }
     this.renderer.setSize(w, h, false)
     this.maskMat.uniforms.uAspect.value = w / h
     this.rebake()
@@ -629,17 +667,9 @@ export class FluidReveal {
     window.removeEventListener('resize', this._onResize)
     this._ro?.disconnect()
 
-    this.velocity.dispose()
-    this.pressure.dispose()
-    this.dye.dispose()
-    this.curlRT.dispose()
-    this.divergenceRT.dispose()
+    this._disposeSim()
     this.baseTexture.dispose()
-    const mats = [
-      this.curlMat, this.vorticityMat, this.advectionMat, this.splatMat,
-      this.divergenceMat, this.pressureMat, this.gradientMat, this.maskMat,
-    ]
-    mats.forEach((m) => m.dispose())
+    this.maskMat.dispose()
     this.quad.geometry.dispose()
     this.renderer.dispose()
   }

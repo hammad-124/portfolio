@@ -14,6 +14,8 @@ export const site = {
   badge: 'Open to work • Full Stack & AI Dev • ',
   email: 'hammadngml@gmail.com',
   resume: '/Hammad__Hamid_Resume.pdf',
+  // Transparent cutout shown on phones and tablets only. Empty string = no photo.
+  photoMobile: '/me-mobile.webp',
   links: [
     { label: 'LinkedIn', href: 'https://linkedin.com/in/hammad-hamid' },
     { label: 'GitHub', href: 'https://github.com/hammad-124' },

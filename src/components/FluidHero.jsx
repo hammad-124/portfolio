@@ -18,7 +18,7 @@ const REVEAL = { from: 1.2, duration: 1.8, stagger: 0.07, delay: 0.2, ease: 'pow
  * separately, shifted down by `letter.off * fontSize` and clipped to its
  * line box, which is what makes the rise-up entrance possible.
  */
-function bakeWords(ctx, w, h, { lines, ink, paper, padX, blockTop, blockHeight, lineGap }) {
+function bakeWords(ctx, w, h, { lines, ink, paper, padX, blockTop, blockHeight, lineGap, portraitBand }) {
   ctx.fillStyle = paper
   ctx.fillRect(0, 0, w, h)
 
@@ -45,10 +45,20 @@ function bakeWords(ctx, w, h, { lines, ink, paper, padX, blockTop, blockHeight, 
   const size = Math.min(...lines.map((l) => fitWidth(l.text)), fitHeight)
   setFont(size)
 
+  // Portrait screens have no room to spare: centre the block instead of the masthead offset.
+  const asc0 = ctx.measureText(lines[0].text).actualBoundingBoxAscent
+  const blockPx = asc0 + lineGap * size * (lines.length - 1)
+  // Portrait: centre the block inside the free band (between the top UI and the photo), or in the whole height.
+  let blockY = h * blockTop
+  if (h > w) {
+    const [bandTop, bandBottom] = portraitBand ? portraitBand(w, h) : [0, h]
+    blockY = bandTop + (bandBottom - bandTop - blockPx) / 2
+  }
+
   let baseline = 0
   lines.forEach((line, li) => {
     const m = ctx.measureText(line.text)
-    if (li === 0) baseline = h * blockTop + m.actualBoundingBoxAscent
+    if (li === 0) baseline = blockY + m.actualBoundingBoxAscent
     else baseline += lineGap * size
 
     // Flush left for line 1, flush right for line 2 (measured on ink, not advance).
@@ -94,6 +104,7 @@ export default function FluidHero({
   blockTop = 0.26,     // wordmark block starts at 26% of the height...
   blockHeight = 0.62,  // ...and is at most 62% tall
   lineGap = 0.86,      // baseline-to-baseline distance in em
+  portraitBand = null,   // portrait screens: (w, h) => [top, bottom] px band the name is centred in (null = whole height)
   settings,
   className = '',
 }) {
@@ -128,7 +139,7 @@ export default function FluidHero({
       settings: settingsRef.current,
       onFirstFrame: () => setReady(true),
       bake: (ctx, w, h) =>
-        bakeWords(ctx, w, h, { lines, ink, paper, padX, blockTop, blockHeight, lineGap }),
+        bakeWords(ctx, w, h, { lines, ink, paper, padX, blockTop, blockHeight, lineGap, portraitBand }),
     })
     fxRef.current = fx
     onEngine?.(fx)
@@ -147,6 +158,7 @@ export default function FluidHero({
       fxRef.current = null
       onEngine?.(null)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [words.left, words.right, ink, paper, padX, blockTop, blockHeight, lineGap])
 

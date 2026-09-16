@@ -16,7 +16,7 @@ const display = { fontFamily: DISPLAY_FONT, fontStretch: '125%' }
 // Stop positions as fractions of the stage. Desktop: a rising route, left -> right.
 // Mobile: a vertical run down the left edge.
 const DESKTOP = [[0.12, 0.72], [0.5, 0.48], [0.88, 0.2]]
-const MOBILE = [[0.1, 0.12], [0.1, 0.5], [0.1, 0.88]]
+const MOBILE = [[0.08, 0.06], [0.08, 0.42], [0.08, 0.78]]
 
 // Card placement relative to each stop (desktop): above-right, below-right, above-left.
 const CARD_DESKTOP = [
@@ -59,7 +59,8 @@ export default function Journey() {
   const pathRef = useRef(null)
   const headRef = useRef(null)
   const barRef = useRef(null)
-  const desktop = useMedia('(min-width: 768px)')
+  const startRef = useRef(null)
+  const desktop = useMedia('(min-width: 1024px)')
   const inView = useInView(stageRef, { once: true, amount: 0.3 })
   const [size, setSize] = useState({ w: 0, h: 0 })
   const [geom, setGeom] = useState(null) // { L, anchors }
@@ -117,13 +118,16 @@ export default function Journey() {
       const q = Math.min(1, Math.max(0, -r.top / range))
       const t = Math.min(1, q / ROUTE_END)
       const { L, anchors } = geom
+      if (L < 10) return // stage not laid out yet; avoid lighting every stop on a zero-length route
       path.style.strokeDasharray = `${L}`
       path.style.strokeDashoffset = `${L * (1 - t)}`
       const p = path.getPointAtLength(L * t)
       head.setAttribute('transform', `translate(${p.x} ${p.y})`)
-      head.style.opacity = t > 0.005 ? '1' : '0'
+      head.style.opacity = t > 0.002 ? '1' : '0'
       if (barRef.current) barRef.current.style.transform = `scaleX(${t})`
-      const n = t < 0.01 ? 0 : anchors.filter((a) => L * t >= a - 4).length
+      // The first stop is lit from the start so the page never looks empty; the rest light as the head arrives.
+      const n = Math.max(1, anchors.filter((a) => L * t >= a - 4).length)
+      if (startRef.current) startRef.current.style.opacity = t < 0.14 ? '1' : '0'
       if (n !== last) { last = n; setReached(n) }
     }
     tick()
@@ -137,7 +141,7 @@ export default function Journey() {
       <div className="sticky top-0 h-svh overflow-hidden bg-paper text-ink">
         {/* Heading */}
         <div className="absolute left-5 right-5 top-[4.5rem] md:top-[5.5rem]">
-          <h2 className="w-[60%] font-black uppercase leading-[0.86] tracking-[-0.03em] md:w-[34%]" style={display}>
+          <h2 className="w-[60%] font-black uppercase leading-[0.86] tracking-[-0.03em] md:w-[44%] lg:w-[34%]" style={display}>
             <Line play={inView} duration={1.1}>
               <FitText max={Math.max(36, size.h * 0.16)}>
                 The <span className="outline-text">journey.</span>
@@ -147,7 +151,7 @@ export default function Journey() {
         </div>
 
         {/* Stage: route + stops + cards */}
-        <div ref={stageRef} className="absolute inset-x-5 bottom-[4.5rem] top-[11rem] md:top-[13rem]">
+        <div ref={stageRef} className="absolute inset-x-5 bottom-[5.5rem] top-[9.5rem] md:top-[11rem] lg:bottom-[4.5rem] lg:top-[13rem]">
           <svg className="pointer-events-none absolute inset-0 h-full w-full overflow-visible" aria-hidden="true">
             {d && (
               <>
@@ -196,14 +200,14 @@ export default function Journey() {
                   animate={lit ? { opacity: 1, y: 0 } : { opacity: 0, y: 14 }}
                   transition={{ duration: 0.8, ease: EASE }}
                 >
-                  <p className="text-[clamp(28px,4vw,56px)] font-black leading-none tracking-[-0.03em] text-accent" style={display}>
+                  <p className="text-[clamp(28px,5vw,56px)] font-black leading-none tracking-[-0.03em] text-accent" style={display}>
                     {s.year}
                   </p>
                   <p className={`mt-2 ${label} opacity-50`}>{s.label}</p>
-                  <p className="mt-1 text-[16px] font-semibold leading-tight md:text-[18px]">{s.title}</p>
+                  <p className="mt-1 text-[15px] font-semibold leading-tight md:text-[18px]">{s.title}</p>
                   <p className={`mt-1 ${label} opacity-60`}>{s.org} · {s.period}</p>
                   {s.note && (
-                    <p className="mt-2 max-w-[20rem] text-[13px] leading-snug opacity-70 [@media(max-height:640px)]:hidden">
+                    <p className="mt-2 hidden max-w-[20rem] text-[13px] leading-snug opacity-70 md:block [@media(max-height:640px)]:hidden">
                       {s.note}
                     </p>
                   )}
@@ -213,6 +217,20 @@ export default function Journey() {
           })}
         </div>
 
+        {/* Start cue: shown until the route begins moving */}
+        <div
+          ref={startRef}
+          className="pointer-events-none absolute inset-x-5 bottom-[7.5rem] flex justify-center transition-opacity duration-500 lg:bottom-[9rem] lg:justify-end"
+          aria-hidden="true"
+        >
+          <div className="flex items-center gap-3 rounded-full bg-ink px-5 py-3 text-paper shadow-lg">
+            <span className={label}>Scroll to travel the route</span>
+            <motion.span animate={{ y: [0, 4, 0] }} transition={{ duration: 1.2, repeat: Infinity, ease: 'easeInOut' }}>
+              <ArrowDown size={14} strokeWidth={2.5} />
+            </motion.span>
+          </div>
+        </div>
+
         {/* Footer: readout + progress bar + hint */}
         <div className="absolute inset-x-5 bottom-5 flex items-end justify-between gap-6">
           <div className={label}>
@@ -220,7 +238,7 @@ export default function Journey() {
               {String(Math.max(1, reached)).padStart(2, '0')} / {String(stops.length).padStart(2, '0')}
             </p>
             <p className="mt-1 text-[13px] font-semibold normal-case tracking-normal">
-              {reached ? `${current.title} — ${current.org}` : 'Start of the route'}
+              {current.title} — {current.org}
             </p>
           </div>
           <div className="flex w-[40%] max-w-[22rem] flex-col items-end gap-2">
