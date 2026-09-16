@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import gsap from 'gsap'
 import { FluidReveal } from '../lib/fluidReveal'
+import { INK, PAPER } from '../lib/palette'
 
 // Wide, heavy grotesk for the wordmark (Archivo variable, width axis pushed to 125%).
 export const DISPLAY_FONT = '"Archivo", "Archivo Black", "Inter Tight", system-ui, sans-serif'
@@ -78,13 +79,17 @@ function bakeWords(ctx, w, h, { lines, ink, paper, padX, blockTop, blockHeight, 
  *   backdrop  — whatever should show through the water (video / gradient)
  *   canvas    — fluid-masked white surface with the giant words baked in
  *   children  — photo + UI, rendered on top (use mix-blend-difference for text)
+ *
+ * `play` gates the letter entrance so it can wait for a preloader.
  */
 export default function FluidHero({
   words,
   backdrop,
   children,
-  ink = '#000000',
-  paper = '#ffffff',
+  play = true,
+  onEngine,
+  ink = INK,
+  paper = PAPER,
   padX = 20,
   blockTop = 0.26,     // wordmark block starts at 26% of the height...
   blockHeight = 0.62,  // ...and is at most 62% tall
@@ -95,10 +100,14 @@ export default function FluidHero({
   const containerRef = useRef(null)
   const canvasRef = useRef(null)
   const settingsRef = useRef(settings)
+  const fxRef = useRef(null)
+  const linesRef = useRef(null)
+  const [fontsReady, setFontsReady] = useState(false)
   // The backdrop stays hidden until the white surface has actually been drawn,
   // otherwise a cached image flashes on reload before the canvas covers it.
   const [ready, setReady] = useState(false)
 
+  // 1. Engine + baked surface. Letters start fully hidden below their baseline.
   useEffect(() => {
     const container = containerRef.current
     const canvas = canvasRef.current
@@ -107,11 +116,11 @@ export default function FluidHero({
     const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
     const start = reduceMotion ? 0 : REVEAL.from
 
-    // Per-letter animation state, read by the bake on every redraw.
     const lines = [
       { text: words.left, align: 'left' },
       { text: words.right, align: 'right' },
     ].map((l) => ({ ...l, letters: [...l.text].map(() => ({ off: start })) }))
+    linesRef.current = lines
 
     const fx = new FluidReveal({
       container,
@@ -121,42 +130,50 @@ export default function FluidHero({
       bake: (ctx, w, h) =>
         bakeWords(ctx, w, h, { lines, ink, paper, padX, blockTop, blockHeight, lineGap }),
     })
+    fxRef.current = fx
+    onEngine?.(fx)
 
     let cancelled = false
-    let tl = null
-
+    setFontsReady(false)
     document.fonts
       .load(`${DISPLAY_WEIGHT} 100px "Archivo"`)
       .then(() => document.fonts.ready)
-      .then(() => {
-        if (cancelled) return
-        fx.rebake()
-        if (reduceMotion) return
-
-        // Random order, like the reference: shuffle every letter across both lines.
-        const targets = lines.flatMap((l) => l.letters)
-        for (let i = targets.length - 1; i > 0; i--) {
-          const j = Math.floor(Math.random() * (i + 1))
-          ;[targets[i], targets[j]] = [targets[j], targets[i]]
-        }
-
-        tl = gsap.timeline({
-          delay: REVEAL.delay,
-          onUpdate: () => fx.rebake(),
-          onComplete: () => fx.rebake(),
-        })
-        targets.forEach((letter, i) => {
-          tl.to(letter, { off: 0, duration: REVEAL.duration, ease: REVEAL.ease }, i * REVEAL.stagger)
-        })
-      })
-      .catch(() => {})
+      .then(() => { if (!cancelled) { fx.rebake(); setFontsReady(true) } })
+      .catch(() => { if (!cancelled) setFontsReady(true) })
 
     return () => {
       cancelled = true
-      tl?.kill()
       fx.destroy()
+      fxRef.current = null
+      onEngine?.(null)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [words.left, words.right, ink, paper, padX, blockTop, blockHeight, lineGap])
+
+  // 2. Letter entrance — only once the font is in AND the page says go.
+  useEffect(() => {
+    const fx = fxRef.current
+    const lines = linesRef.current
+    if (!fx || !lines || !fontsReady || !play) return
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+
+    // Random order, like the reference: shuffle every letter across both lines.
+    const targets = lines.flatMap((l) => l.letters)
+    for (let i = targets.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1))
+      ;[targets[i], targets[j]] = [targets[j], targets[i]]
+    }
+
+    const tl = gsap.timeline({
+      delay: REVEAL.delay,
+      onUpdate: () => fx.rebake(),
+      onComplete: () => fx.rebake(),
+    })
+    targets.forEach((letter, i) => {
+      tl.to(letter, { off: 0, duration: REVEAL.duration, ease: REVEAL.ease }, i * REVEAL.stagger)
+    })
+    return () => tl.kill()
+  }, [fontsReady, play])
 
   return (
     <div

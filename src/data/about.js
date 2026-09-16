@@ -1,6 +1,6 @@
-// Content for the About view. Edit freely.
+// Content for the About page (the one revealed under the water). Edit freely.
 export const about = {
-  statement: ['I BUILD', 'PRODUCTS', 'THAT THINK.'],
+  quote: 'I build products that think.',
   bio:
     'Full Stack & AI developer with 1.5+ years shipping production apps on the MERN stack — scalable REST APIs, real-time features, RAG pipelines, LLM fine-tuning and agentic workflows, containerised and deployed on AWS.',
   stats: [
@@ -8,22 +8,34 @@ export const about = {
     { value: '07', label: 'Products live' },
     { value: '09', label: 'AI agents orchestrated' },
   ],
-  facts: [
-    { k: 'Now', v: 'Associate Software Engineer, Axtra Studios', sub: 'Jun 2025 — Present' },
-    { k: 'Before', v: 'MERN Stack Developer, MAGMA3C', sub: 'Oct 2024 — Mar 2025' },
-    { k: 'Education', v: 'BS Computer Science, GCU Faisalabad', sub: '2021 — 2025' },
+  // The line travels through these in order as you scroll (oldest first).
+  timeline: [
+    {
+      year: '2021',
+      label: 'Education',
+      title: 'BS Computer Science',
+      org: 'GCU Faisalabad',
+      period: '2021 — 2025',
+      note: 'Final-year project: Refine AI, an AI-driven CRM with sentiment analysis and a Gemini agent.',
+    },
+    {
+      year: '2024',
+      label: 'Experience',
+      title: 'MERN Stack Developer',
+      org: 'MAGMA3C',
+      period: 'Oct 2024 — Mar 2025',
+      note: 'Built a construction marketplace end-to-end with Next.js, Express and MongoDB.',
+    },
+    {
+      year: '2025',
+      label: 'Now',
+      title: 'Associate Software Engineer',
+      org: 'Axtra Studios',
+      period: 'Jun 2025 — Present',
+      note: 'Shipping SaaS, e-commerce and AI agent products on the MERN stack.',
+    },
   ],
   city: 'Lahore',
   timeZone: 'Asia/Karachi',
-  // Portrait that follows the cursor while hovering the statement
-  portrait: '/hero-wide.jpg',
-  // Pills that drop into the physics playground (order = drop order)
-  skills: [
-    'React', 'Next.js', 'TypeScript', 'Node.js', 'Express', 'FastAPI', 'MongoDB', 'PostgreSQL',
-    'Redux Toolkit', 'React Query', 'Tailwind', 'Socket.IO', 'WebRTC', 'Supabase', 'LangChain',
-    'LangGraph', 'RAG', 'LoRA / QLoRA', 'Hugging Face', 'OpenAI', 'Gemini', 'Vector Search',
-    'Docker', 'AWS EC2', 'Stripe', 'Twilio', 'Python',
-  ],
-  // Runs along the bottom edge (the "floor" the pills land on)
-  marquee: ['Open to work', 'MERN & AI', 'Remote-friendly', 'Lahore, PK', "Let's build", '1.5+ yrs shipping'],
+  availability: 'Open to remote & on-site',
 }

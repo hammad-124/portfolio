@@ -8,8 +8,12 @@ import * as THREE from 'three'
  * texture by the `bake` callback) so whatever sits behind the canvas shows
  * through, like water washing paint off glass.
  *
+ * Besides the mouse, two programmatic controls exist:
+ *   setWash(p)  — 0..1 procedural flood from the top edge (scroll-driven)
+ *   splat(...)  — inject a splat at a normalized point (turbulence, etc.)
+ *
  * Pipeline per frame:
- *   splat (mouse) -> curl -> vorticity -> advect velocity -> advect dye
+ *   splats (mouse + queue) -> curl -> vorticity -> advect velocity -> advect dye
  *   -> divergence -> pressure (Jacobi) -> gradient subtract -> composite
  */
 
@@ -178,7 +182,9 @@ const GRADIENT_SUBTRACT = /* glsl */ `
   }
 `
 
-// Final composite: the baked surface fades to transparent wherever there is dye.
+// Final composite: the baked surface fades to transparent wherever there is
+// dye, or wherever the scroll-driven wash has flooded past (an organic front
+// pouring from the top edge, shaped by value noise so it never looks like a wipe).
 const MASK = /* glsl */ `
   precision highp float;
   uniform sampler2D uBase;
@@ -188,13 +194,35 @@ const MASK = /* glsl */ `
   uniform float uEdgeWidth;
   uniform float uDyeScale;   // 1 / overscan
   uniform float uDyeOffset;  // (overscan - 1) / 2 / overscan
+  uniform float uWash;       // 0..1 flood progress
+  uniform float uTime;
+  uniform float uAspect;
   varying vec2 vUv;
+
+  float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123); }
+  float noise(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), f.x),
+               mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x), f.y);
+  }
 
   void main() {
     float dye = texture2D(uDye, vec2(vUv.x, uDyeOffset + vUv.y * uDyeScale)).r;
     vec4 base = texture2D(uBase, vUv);
     float raw = dye * uRevealSize;
     float mask = clamp(smoothstep(uEdgeSoftness, uEdgeSoftness + uEdgeWidth, raw), 0.0, 1.0);
+
+    if (uWash > 0.0) {
+      float y = 1.0 - vUv.y;                       // 0 at the top edge, 1 at the bottom
+      vec2 q = vec2(vUv.x * uAspect * 2.2, vUv.y * 2.2);
+      float n = noise(q + uTime * 0.06) * 0.7 + noise(q * 2.7 - uTime * 0.04) * 0.3;
+      float front = uWash * 1.35 - y - (n - 0.5) * 0.4;
+      float wash = smoothstep(0.0, 0.08, front);
+      mask = max(mask, wash);
+    }
+
     gl_FragColor = vec4(base.rgb, base.a * (1.0 - mask));
   }
 `
@@ -206,6 +234,7 @@ export class FluidReveal {
    * @param {HTMLCanvasElement} opts.canvas  canvas to render into (absolutely positioned over container)
    * @param {(ctx: CanvasRenderingContext2D, width: number, height: number) => void} opts.bake
    *        draws the surface that will be washed away (in CSS pixels)
+   * @param {() => void} [opts.onFirstFrame]
    * @param {Partial<typeof DEFAULT_SETTINGS>} [opts.settings]
    */
   constructor({ container, canvas, bake, onFirstFrame, settings = {} }) {
@@ -220,6 +249,9 @@ export class FluidReveal {
     this.prevMouse = { x: 0.5, y: 0.5 }
     this.mouseHasMoved = false
     this.size = { width: 1, height: 1 }
+    this.queue = [] // programmatic splats
+    this.wash = 0
+    this.time = 0
 
     this._buildRenderer()
     this._buildSim()
@@ -229,6 +261,32 @@ export class FluidReveal {
 
     this._animate = this._animate.bind(this)
     this._rafId = requestAnimationFrame(this._animate)
+  }
+
+  /* ---------- public controls ---------- */
+
+  /** Wipe all dye and velocity, so the surface is intact again. */
+  reset() {
+    const clear = (t) => { this.renderer.setRenderTarget(t); this.renderer.clear() }
+    clear(this.dye.read); clear(this.dye.write)
+    clear(this.velocity.read); clear(this.velocity.write)
+    clear(this.pressure.read); clear(this.pressure.write)
+    this.renderer.setRenderTarget(null)
+    this.queue.length = 0
+    this.mouseHasMoved = false
+  }
+
+  /** 0..1 — how far the scroll-driven flood has poured down the surface. */
+  setWash(p) {
+    this.wash = Math.min(1, Math.max(0, p))
+  }
+
+  /**
+   * Inject a splat. x, y are normalized to the visible canvas (0..1, y from the
+   * top); dx, dy are a direction in the same units; strength scales the dye.
+   */
+  splat(x, y, dx = 0, dy = 0, strength = 1) {
+    this.queue.push({ x, y, dx, dy, strength })
   }
 
   /* ---------- setup ---------- */
@@ -365,6 +423,9 @@ export class FluidReveal {
         uEdgeWidth: { value: s.edgeWidth },
         uDyeScale: { value: 1 / s.overscan },
         uDyeOffset: { value: (s.overscan - 1) / 2 / s.overscan },
+        uWash: { value: 0 },
+        uTime: { value: 0 },
+        uAspect: { value: 1 },
       },
     })
   }
@@ -387,12 +448,21 @@ export class FluidReveal {
     }
   }
 
-  _setPointer(clientX, clientY) {
-    const r = this.canvas.getBoundingClientRect()
+  // Map a point in visible-canvas space (0..1, y from top) into the taller
+  // virtual sim domain (0..1, y from bottom).
+  _toSim(nx, ny) {
     const o = this.settings.overscan
     const pad = (o - 1) / 2
-    this.mouse.x = (clientX - r.left) / r.width
-    this.mouse.y = (pad + (1 - (clientY - r.top) / r.height)) / o
+    return { x: nx, y: (pad + (1 - ny)) / o }
+  }
+
+  _setPointer(clientX, clientY) {
+    const r = this.canvas.getBoundingClientRect()
+    // Ignore the pointer while the canvas is off screen (it still receives window events).
+    if (r.bottom <= 0 || r.top >= window.innerHeight) return
+    const p = this._toSim((clientX - r.left) / r.width, (clientY - r.top) / r.height)
+    this.mouse.x = p.x
+    this.mouse.y = p.y
     this.mouseHasMoved = true
   }
 
@@ -405,6 +475,7 @@ export class FluidReveal {
     if (w === this.size.width && h === this.size.height && this._baked) return
     this.size = { width: w, height: h }
     this.renderer.setSize(w, h, false)
+    this.maskMat.uniforms.uAspect.value = w / h
     this.rebake()
   }
 
@@ -431,51 +502,54 @@ export class FluidReveal {
     this.renderer.render(this.scene, this.camera)
   }
 
-  // 0 while the hero is in view, ramps to 1 as it scrolls out. Used to
-  // damp the splats and dissipate the dye faster.
-  _scrollFade() {
-    const r = this.canvas.getBoundingClientRect()
-    const o = this.settings.overscan
-    const pad = (o - 1) / 2
-    const h = r.height || 1
-    return Math.min(1, Math.max(0, (pad * h - r.top) / (o * h)))
-  }
-
   _animate() {
     if (this.disposed) return
     this._rafId = requestAnimationFrame(this._animate)
+    // Skip the whole sim while the canvas is scrolled out of view.
+    const r = this.canvas.getBoundingClientRect()
+    if (r.bottom <= 0 || r.top >= window.innerHeight) return
     this._step()
+  }
+
+  _splat(x, y, dx, dy, strength, aspect) {
+    const s = this.settings
+    const u = this.splatMat.uniforms
+    u.uAspectRatio.value = aspect
+    u.uPoint.value.set(x, y)
+    u.uRadius.value = s.splatRadius
+
+    u.uTarget.value = this.velocity.read.texture
+    u.uColor.value.set(dx * s.splatForce * strength, dy * s.splatForce * strength, 0)
+    this._renderPass(this.splatMat, this.velocity.write)
+    this.velocity.swap()
+
+    u.uTarget.value = this.dye.read.texture
+    u.uColor.value.set(strength, strength, strength)
+    this._renderPass(this.splatMat, this.dye.write)
+    this.dye.swap()
   }
 
   _step() {
     const s = this.settings
     const aspect = this.size.width / (this.size.height * s.overscan)
-    const fade = this._scrollFade()
-    const fadeSq = fade * fade
-    const strength = 1 - fadeSq
+    const strength = 0.89 // the reference's rest strength (1 - (1/3)^2)
+    this.time += 1 / 60
 
-    // 1. splat mouse movement into velocity + dye
+    // 1a. mouse splat
     if (this.mouseHasMoved) {
       const dx = this.mouse.x - this.prevMouse.x
       const dy = this.mouse.y - this.prevMouse.y
-      if (Math.hypot(dx, dy) > 0 && strength > 0.001) {
-        const u = this.splatMat.uniforms
-        u.uAspectRatio.value = aspect
-        u.uPoint.value.set(this.mouse.x, this.mouse.y)
-        u.uRadius.value = s.splatRadius
-
-        u.uTarget.value = this.velocity.read.texture
-        u.uColor.value.set(dx * s.splatForce * strength, dy * s.splatForce * strength, 0)
-        this._renderPass(this.splatMat, this.velocity.write)
-        this.velocity.swap()
-
-        u.uTarget.value = this.dye.read.texture
-        u.uColor.value.set(strength, strength, strength)
-        this._renderPass(this.splatMat, this.dye.write)
-        this.dye.swap()
-      }
+      if (Math.hypot(dx, dy) > 0) this._splat(this.mouse.x, this.mouse.y, dx, dy, strength, aspect)
       this.prevMouse.x = this.mouse.x
       this.prevMouse.y = this.mouse.y
+    }
+    // 1b. queued splats
+    if (this.queue.length) {
+      const o = s.overscan
+      for (const q of this.queue.splice(0, 8)) {
+        const p = this._toSim(q.x, q.y)
+        this._splat(p.x, p.y, q.dx, -q.dy / o, q.strength, aspect)
+      }
     }
 
     // 2. curl + vorticity confinement
@@ -497,11 +571,11 @@ export class FluidReveal {
     this._renderPass(this.advectionMat, this.velocity.write)
     this.velocity.swap()
 
-    // 4. advect dye (dissipates faster as the hero scrolls away)
+    // 4. advect dye
     adv.uVelocity.value = this.velocity.read.texture
     adv.uSource.value = this.dye.read.texture
     adv.uTexelSize.value = this.dyeTexel
-    adv.uDissipation.value = s.dyeDissipation + (0.97 - s.dyeDissipation) * fadeSq
+    adv.uDissipation.value = s.dyeDissipation
     this._renderPass(this.advectionMat, this.dye.write)
     this.dye.swap()
 
@@ -526,7 +600,10 @@ export class FluidReveal {
     this.velocity.swap()
 
     // 8. composite to screen
-    this.maskMat.uniforms.uDye.value = this.dye.read.texture
+    const mu = this.maskMat.uniforms
+    mu.uDye.value = this.dye.read.texture
+    mu.uWash.value = this.wash
+    mu.uTime.value = this.time
     this.quad.material = this.maskMat
     this.renderer.setRenderTarget(null)
     this.renderer.clear()

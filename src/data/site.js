@@ -19,12 +19,4 @@ export const site = {
     { label: 'GitHub', href: 'https://github.com/hammad-124' },
     { label: 'Hugging Face', href: 'https://huggingface.co/Hammad-Hamid' },
   ],
-  // Transparent PNG cutout placed in /public. Empty string = no photo.
-  photo: '',
-  // Full-screen portrait revealed by the water effect. Drop the files in /public
-  // and fill these in: a wide 16:9 for desktop, a tall 9:16 for phones/tablets.
-  backdrop: {
-    desktop: '/hero-wide.jpg',
-    mobile: '',  // e.g. '/hero-tall.jpg'
-  },
 }
